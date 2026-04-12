@@ -17,17 +17,50 @@ Replace this paragraph with your own summary of what your version does.
 
 ## How The System Works
 
-Explain your design in plain language.
+### Song Features
 
-Some prompts to answer:
+Each `Song` object stores: `id`, `title`, `artist`, `genre`, `mood`, `energy` (0–1), `tempo_bpm`, `valence` (0–1), `danceability` (0–1), and `acousticness` (0–1).
 
-- What features does each `Song` use in your system
-  - For example: genre, mood, energy, tempo
-- What information does your `UserProfile` store
-- How does your `Recommender` compute a score for each song
-- How do you choose which songs to recommend
+### User Profile
 
-You can include a simple diagram or bullet list if helpful.
+The `UserProfile` holds:
+- `favorite_genre` — the genre the user most wants to hear
+- `favorite_mood` — the emotional vibe the user is after (e.g. `happy`, `chill`, `intense`)
+- `target_energy` — a 0–1 float representing how high-energy the user wants songs to be
+- `likes_acoustic` — a boolean that unlocks a small bonus for acoustic-heavy songs
+
+**Critique / differentiation note:** A profile with `favorite_genre = "rock"` and `favorite_mood = "intense"` will rank *Storm Runner* (rock, intense, energy 0.91) far above *Library Rain* (lofi, chill, energy 0.35), even though both could score some energy-similarity points. The combination of a categorical genre match (+2.0) and a categorical mood match (+1.0) is strong enough to separate those two clusters clearly. A purely energy-based profile would blur that line, but the categorical fields keep them distinct.
+
+### Algorithm Recipe
+
+For every song in the catalog, the system computes a score:
+
+| Rule | Points |
+|---|---|
+| `song.genre == user.favorite_genre` | **+2.0** |
+| `song.mood == user.favorite_mood` | **+1.0** |
+| Energy closeness: `1.0 - abs(song.energy - user.target_energy)` | **0.0 – 1.0** |
+| Acoustic bonus (only when `likes_acoustic=True` and `song.acousticness >= 0.70`) | **+0.5** |
+
+Maximum possible score: **4.5**
+
+Songs are then sorted highest-to-lowest and the top `k` (default 5) are returned.
+
+**Potential bias to watch for:** Genre carries the most weight (+2.0). A song with the right genre but the wrong mood will still outscore a perfect-mood, wrong-genre song. This means the system may over-prioritize genre and miss emotionally fitting songs from adjacent genres (e.g., a great *indie pop* track when the user asked for *pop*).
+
+### Data Flow Diagram
+
+```mermaid
+flowchart TD
+    A([User Profile\ngenre · mood · energy · likes_acoustic]) --> C
+    B([songs.csv\n30 songs]) --> C[Load all songs into memory]
+    C --> D{For each song\nin the catalog}
+    D --> E[Score the song\n+2.0 genre · +1.0 mood\n+0–1 energy · +0.5 acoustic]
+    E --> F[Attach explanation\nlist of matching reasons]
+    F --> D
+    D -- all songs scored --> G[Sort by score\nhighest first]
+    G --> H([Return Top K\nRecommendations])
+```
 
 ---
 
