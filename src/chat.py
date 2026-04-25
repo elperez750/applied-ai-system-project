@@ -9,11 +9,9 @@ import json
 import logging
 from pathlib import Path
 
-from google import genai
-
 # Allow running from project root or src/
 sys.path.insert(0, str(Path(__file__).parent))
-from recommender import load_songs, recommend_songs
+from src.recommender import load_songs, recommend_songs
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 
@@ -104,21 +102,40 @@ def build_prompt(user_query: str, retrieved: list) -> str:
     )
 
 
+# ── Demo mode (no API key needed) ────────────────────────────────────────────
+
+def _demo_reply(retrieved: list, user_query: str) -> str:
+    """Generate a realistic response from retrieved songs without calling the API."""
+    songs = [s for s, _, _ in retrieved]
+    names = ", ".join(f'"{s["title"]}" by {s["artist"]}' for s in songs[:3])
+    top = songs[0]
+    return (
+        f'Based on your request for "{user_query}", here are my top picks from the catalog. '
+        f'{names} all fit the vibe well. '
+        f'"{top["title"]}" by {top["artist"]} is the strongest match — '
+        f'it\'s {top["genre"]}, {top["mood"]}, with an energy level of {top["energy"]:.2f}. '
+        f'Give it a listen and let me know if you want something different!'
+    )
+
+
 # ── Main chat loop ────────────────────────────────────────────────────────────
 
-def run_chat() -> None:
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("Error: GEMINI_API_KEY environment variable is not set.")
-        print("Set it with:  export GEMINI_API_KEY=your_key_here")
-        sys.exit(1)
+def run_chat(demo: bool = False) -> None:
+    client = None
+    if not demo:
+        from google import genai  # lazy import so tests can import parse_query without the package
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            print("Error: GEMINI_API_KEY environment variable is not set.")
+            print("Tip: run with --demo to try the system without an API key.")
+            sys.exit(1)
+        client = genai.Client(api_key=api_key)
 
     data_path = Path(__file__).parent.parent / "data" / "songs.csv"
     songs_db = load_songs(str(data_path))
 
-    client = genai.Client(api_key=api_key)
-
-    print("\n=== Music Recommender — Gemini + RAG ===")
+    mode_label = "[DEMO MODE — responses are template-based]" if demo else "[Gemini 2.0 Flash]"
+    print(f"\n=== Music Recommender — Gemini + RAG  {mode_label} ===")
     print("Tell me what you're in the mood for. Type 'quit' to exit.\n")
 
     while True:
@@ -138,24 +155,35 @@ def run_chat() -> None:
         prefs = parse_query(user_input)
         retrieved = recommend_songs(prefs, songs_db, k=5)
 
-        # Generation step: send retrieved songs + query to Gemini
-        prompt = build_prompt(user_input, retrieved)
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
-            )
-            reply = response.text.strip()
-        except Exception as exc:
-            reply = f"[Gemini error: {exc}]"
-            logging.error("Gemini API error: %s", exc)
+        # Confidence score: normalize top song's raw score against the max possible (4.5)
+        top_score = retrieved[0][1] if retrieved else 0.0
+        confidence = round(min(top_score / 4.5, 1.0), 2)
+
+        if confidence < 0.4:
+            print(f"\n[Low confidence: {confidence:.2f} — no close catalog match found, results may be off]\n")
+
+        # Generation step
+        if demo:
+            reply = _demo_reply(retrieved, user_input)
+        else:
+            prompt = build_prompt(user_input, retrieved)
+            try:
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt,
+                )
+                reply = response.text.strip()
+            except Exception as exc:
+                reply = f"[Gemini error: {exc}]"
+                logging.error("Gemini API error: %s", exc)
 
         print(f"\nAssistant: {reply}\n")
 
-        # Log query, retrieved songs, and response
+        # Log query, retrieved songs, confidence, and response
         logging.info(json.dumps({
             "query": user_input,
             "parsed_prefs": prefs,
+            "confidence": confidence,
             "retrieved_songs": [s["title"] for s, _, _ in retrieved],
             "response_preview": reply[:120],
         }))
