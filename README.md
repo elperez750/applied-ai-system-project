@@ -4,7 +4,7 @@ A conversational music recommendation system that uses Retrieval-Augmented Gener
 
 **GitHub:** https://github.com/elperez750/applied-ai-system
 
-**Video Walkthrough:** [Loom — link coming soon]
+**Video Walkthrough:** https://www.loom.com/share/df178d7cb10747509c25ede272504f33
 
 ---
 
